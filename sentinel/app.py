@@ -76,6 +76,10 @@ def create_app(runtime=None, token=None, pause_seconds=60, agent_token=None):
     def run_rules(run):
         stored=db.one('SELECT rules_json FROM rules WHERE version_hash=?',(run['rules_version'],))
         return [Rule.model_validate(r) for r in json.loads(stored['rules_json'])]
+    def limits(run):
+        rs=run_rules(run)
+        return {'deleted':min(r.limit for r in rs if r.type=='count_limit'),
+                'spent':min(r.limit for r in rs if r.type=='cumulative_limit')}
     def decision(aid,verdict,rule,reason,who,ver):
         db.write('INSERT INTO decisions(action_id,verdict,rule_id,reason,decided_by,decided_at,rules_version) VALUES(?,?,?,?,?,?,?)',(aid,verdict,rule,reason,who,now(),ver))
     def action_result(aid):
@@ -130,7 +134,9 @@ def create_app(runtime=None, token=None, pause_seconds=60, agent_token=None):
     @app.get('/api/state',dependencies=secured)
     def state():
         runs=db.rows('SELECT * FROM runs ORDER BY started_at DESC LIMIT 30')
-        for r in runs: r['counters']=db.counters(r['id'])
+        for r in runs:
+            r['counters']=db.counters(r['id'])
+            r['limits']=limits(r)
         actions=db.rows('SELECT * FROM actions ORDER BY id DESC LIMIT 200')
         for a in actions: a['decisions']=db.rows('SELECT * FROM decisions WHERE action_id=? ORDER BY id',(a['id'],))
         return {'runs':runs,'actions':actions,'rules_version':active}
@@ -197,14 +203,15 @@ def create_app(runtime=None, token=None, pause_seconds=60, agent_token=None):
         run=get_run(rid)
         actions=db.rows('SELECT * FROM actions WHERE run_id=? ORDER BY id',(rid,))
         for a in actions: a['decisions']=db.rows('SELECT * FROM decisions WHERE action_id=? ORDER BY id',(a['id'],))
-        return {'run':run,'counters':db.counters(rid),'actions':actions}
+        return {'run':run,'counters':db.counters(rid),'actions':actions,'limits':limits(run)}
     @app.get('/runs/{rid}/report',dependencies=secured,response_class=HTMLResponse)
     def report_page(rid:str,request:Request):
         return templates.TemplateResponse(request=request,name='report.html',context=report(rid))
     from .compiler import attach_compiler
     def activate(new_rules,english):
         nonlocal active
-        active=version(new_rules)
-        db.write('INSERT OR REPLACE INTO rules VALUES(?,?,?,?)',(active,json.dumps([r.model_dump() for r in new_rules]),english,now()))
+        new_version=version(new_rules)
+        db.write('INSERT OR REPLACE INTO rules VALUES(?,?,?,?)',(new_version,json.dumps([r.model_dump() for r in new_rules]),english,now()))
+        active=new_version
     attach_compiler(app,operator_only,db,runtime,activate,lambda: [Rule.model_validate(r) for r in json.loads(db.one('SELECT rules_json FROM rules WHERE version_hash=?',(active,))['rules_json'])])
     return app

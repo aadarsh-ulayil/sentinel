@@ -44,6 +44,8 @@ def test_draft_requires_explicit_activation(client,monkeypatch):
     assert client.post(f"/api/compiler/{draft['id']}/activate").status_code==200
     after=client.post('/api/runs',json={}).json()
     assert after['rules_version']!=before['rules_version']
+    assert client.get(f"/api/runs/{after['id']}/report").json()['limits']['spent']==400
+    assert client.get(f"/api/runs/{before['id']}/report").json()['limits']['spent']==500
     assert client.get(f"/api/runs/{before['id']}/report").json()['run']['rules_version']==before['rules_version']
     assert client.post(f"/api/compiler/{draft['id']}/activate").status_code==409
     rows=client.app.state.store.rows('SELECT rules_json FROM rules WHERE version_hash=?',(after['rules_version'],))
@@ -68,3 +70,36 @@ def test_missing_credentials(client,monkeypatch):
 @pytest.mark.parametrize('kind', ['path_allowlist','count_limit','cumulative_limit','per_call_threshold','regex_block','recipient_allowlist','command_rules','domain_allowlist','download_block'])
 def test_template_readbacks(kind):
     assert compiler.readback(Rule(id='r',type=kind,limit=100,values=['alice']))
+
+
+def test_offline_example_needs_no_key(client,monkeypatch):
+    monkeypatch.delenv('TEST_META_SECRET')
+    response=client.post('/api/compiler/example')
+    assert response.status_code==200
+    draft=response.json()
+    assert draft['eligible'] and draft['source'].startswith('Offline example')
+    assert client.post(f"/api/compiler/{draft['id']}/activate").status_code==200
+    assert client.app.state.store.one('SELECT model FROM compile_log')['model']=='human-written-offline-example'
+
+
+def test_pause_rule_can_compile_against_combined_policy(client,monkeypatch):
+    cases={'tests':[{'action':{'run_id':'test','tool':'spend_money','args':{'amount_inr':amount,'payee':'demo'}},'counters':{'spent':spent},'expected':expected} for amount,spent,expected in [(100,0,'allow'),(200,100,'allow'),(100,300,'allow'),(501,0,'block'),(200,400,'block'),(1,500,'block')]]}
+    mock_model(monkeypatch,[{'id':'draft','type':'per_call_threshold','limit':200},cases])
+    draft=client.post('/api/compiler/draft',json={'english':'Pause payments over 200 rupees.'}).json()
+    assert draft['eligible'] and draft['pause_probes'][0]['passed']
+    assert client.post(f"/api/compiler/{draft['id']}/activate").status_code==200
+
+
+def test_changed_policy_rechecks_stale_draft(client,monkeypatch):
+    old=client.post('/api/compiler/example').json()
+    cases={'tests':[{'action':{'run_id':'test','tool':'spend_money','args':{'amount_inr':amount,'payee':'demo'}},'counters':{'spent':spent},'expected':expected} for amount,spent,expected in [(10,0,'allow'),(20,10,'allow'),(10,30,'allow'),(101,0,'block'),(20,90,'block'),(1,100,'block')]]}
+    mock_model(monkeypatch,[{'id':'draft','type':'cumulative_limit','limit':100},cases])
+    newer=client.post('/api/compiler/draft',json={'english':'Spend at most 100 rupees.'}).json()
+    assert client.post(f"/api/compiler/{newer['id']}/activate").status_code==200
+    assert client.post(f"/api/compiler/{old['id']}/activate").status_code==409
+
+
+def test_invalid_counter_examples_are_rejected(client,monkeypatch):
+    cases=examples();cases['tests'][0]['counters']={'spent':-1000}
+    mock_model(monkeypatch,[{'id':'draft','type':'cumulative_limit','limit':400},cases])
+    assert client.post('/api/compiler/draft',json={'english':'Spend at most 400 rupees.'}).status_code==422

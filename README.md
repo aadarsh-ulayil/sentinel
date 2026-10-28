@@ -93,17 +93,19 @@ Run serialization prevents two simultaneous actions from both spending the same 
 
 Downloads resolve DNS, reject non-public destinations, pin a public IP for the actual TLS connection, retain hostname certificate validation, refuse redirects and compressed responses, enforce a streaming byte cap, and save UTF-8 text to quarantine outside the sandbox. Downloads are never executed. Terminal execution uses no shell and permits only `pwd`, `ls`, and `whoami` with no arguments. Regex alone cannot safely contain arbitrary shell commands.
 
-## Optional rule compiler
+## Rule authoring: offline now, Meta later
 
-Configure `META_BASE_URL`, `META_MODEL`, and `META_API_KEY_ENV` plus its corresponding secret, using your Meta documentation. In the dashboard, enter a rule and choose **Draft and test**.
+Without any API key, click **Try offline example**. This loads a fixed, human-written ₹400 spending rule, runs six deterministic tests, and lets you review and activate it. It is explicitly labeled offline: your English input is not translated and no model call is simulated.
+
+For live translation, configure `META_BASE_URL`, `META_MODEL`, and `META_API_KEY_ENV` plus its corresponding secret, using your Meta documentation. In the dashboard, enter a rule and choose **Draft with Meta**.
 
 One model call produces a single structured rule; Pydantic rejects extra fields and unknown types. A second proposes three allow and three block examples. The deterministic engine evaluates them; a fixed template provides the English readback. Only a passing draft can be explicitly activated. New rules append to the base rules and apply only to new runs; they cannot remove protections.
 
-The compiler's required test gate is literal: three allow and three block examples. Pause-only rule drafts may fail this gate and remain unactivatable. Model-proposed tests are examples, not a proof of correctness. No generated code is executed. Compiler prompts and drafts are stored in the local compile log. Live API behavior must be verified with account credentials.
+The compiler tests the combined existing policy plus the candidate rule: exactly three allow and three block examples. Pause-type drafts also get fixed, rule-specific pause probes. Activation reruns the six examples against the latest active policy, so stale drafts cannot skip validation after another activation. Model-proposed tests are examples, not a proof of correctness. No generated code is executed. Compiler prompts and drafts are stored in the local compile log. Live API behavior must be verified with account credentials.
 
 ## Verification
 
-Verified locally: 60 automated tests, a live Muse Spark Open listing run using the restricted agent token, and browser login, scripted rehearsal, human denial, kill, and activity report. Compiler calls are mocked in tests; live Meta compiler verification still requires its separate API key.
+Verified locally: 64 automated tests, a live Muse Spark Open listing run using the restricted agent token, and browser login, scripted rehearsal, human denial, kill, and activity report. Compiler calls are mocked in tests; the offline example covers the complete review and activation flow without credentials. Live Meta translation verification still requires its separate API key.
 
 ## Tests
 
