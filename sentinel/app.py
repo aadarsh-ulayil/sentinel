@@ -8,6 +8,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
+from typing import Literal
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
@@ -24,16 +25,20 @@ load_dotenv(BASE/'.env')
 
 class NewRun(Strict):
     task: str = Field(default='Tidy the demo folder',max_length=2000)
+class FinishRun(Strict):
+    status: Literal['completed','failed'] = 'completed'
 class Answer(Strict):
     approve: bool
 class Login(Strict):
     token: str
 
-def create_app(runtime=None, token=None, pause_seconds=60):
+def create_app(runtime=None, token=None, pause_seconds=60, agent_token=None):
     runtime=Path(runtime or BASE/'.runtime')
     runtime.mkdir(parents=True,exist_ok=True)
     token=token or os.getenv('SENTINEL_TOKEN','')
     if len(token)<24: raise RuntimeError('Set SENTINEL_TOKEN to a random value of at least 24 characters in .env')
+    agent_token=agent_token or os.getenv('SENTINEL_AGENT_TOKEN') or secrets.token_urlsafe(32)
+    if agent_token==token or len(agent_token)<24: raise RuntimeError('Agent token must be distinct and at least 24 characters')
     db=Store(runtime/'sentinel.sqlite3')
     pending={}; tasks=set(); locks={}; execution_lock=asyncio.Lock()
     rules=list(DEFAULT_RULES)
@@ -57,8 +62,13 @@ def create_app(runtime=None, token=None, pause_seconds=60):
         if origin and origin!=str(request.base_url).rstrip('/'):
             raise HTTPException(403,'Cross-origin requests are blocked')
         supplied=request.headers.get('authorization','').removeprefix('Bearer ') or request.cookies.get('sentinel_session','')
-        if not secrets.compare_digest(supplied,token): raise HTTPException(401,'Gateway token required')
+        if not (secrets.compare_digest(supplied,token) or secrets.compare_digest(supplied,agent_token)): raise HTTPException(401,'Gateway token required')
+    def operator(request: Request):
+        authorize(request)
+        supplied=request.headers.get('authorization','').removeprefix('Bearer ') or request.cookies.get('sentinel_session','')
+        if not secrets.compare_digest(supplied,token): raise HTTPException(403,'Operator token required')
     secured=[Depends(authorize)]
+    operator_only=[Depends(operator)]
     def get_run(run_id):
         run=db.one('SELECT * FROM runs WHERE id=?',(run_id,))
         if not run: raise HTTPException(404,'Run not found')
@@ -151,7 +161,7 @@ def create_app(runtime=None, token=None, pause_seconds=60):
         return action_result(aid)
     @app.get('/api/actions/{aid}',dependencies=secured)
     def get_action(aid:int): return action_result(aid)
-    @app.post('/api/actions/{aid}/answer',dependencies=secured)
+    @app.post('/api/actions/{aid}/answer',dependencies=operator_only)
     def answer(aid:int,body:Answer):
         state=pending.get(aid)
         if not state or state['event'].is_set(): raise HTTPException(409,'Action is no longer waiting')
@@ -161,7 +171,7 @@ def create_app(runtime=None, token=None, pause_seconds=60):
         decision(aid,'allow' if body.approve else 'block','HUMAN','Operator approved' if body.approve else 'Operator denied','human',run['rules_version'])
         state['event'].set()
         return {'ok':True}
-    @app.post('/api/runs/{rid}/kill',dependencies=secured)
+    @app.post('/api/runs/{rid}/kill',dependencies=operator_only)
     def kill(rid:str):
         run=get_run(rid)
         if run['status']=='running': db.write("UPDATE runs SET status='killed',ended_at=? WHERE id=?",(now(),rid))
@@ -172,13 +182,13 @@ def create_app(runtime=None, token=None, pause_seconds=60):
                 decision(aid,'block','KILLED','Operator killed the run','human',run['rules_version']); p['event'].set()
         return {'ok':True}
     @app.post('/api/runs/{rid}/finish',dependencies=secured)
-    def finish_run(rid:str):
+    def finish_run(rid:str,body:FinishRun=FinishRun()):
         get_run(rid)
         busy=db.one("SELECT COUNT(*) n FROM actions WHERE run_id=? AND status IN ('checking','executing','waiting_for_human')",(rid,))['n']
         if busy: raise HTTPException(409,'Actions are still pending')
-        db.write("UPDATE runs SET status='completed',ended_at=? WHERE id=? AND status='running'",(now(),rid))
+        db.write("UPDATE runs SET status=?,ended_at=? WHERE id=? AND status='running'",(body.status,now(),rid))
         return get_run(rid)
-    @app.post('/api/runs/{rid}/reset',dependencies=secured)
+    @app.post('/api/runs/{rid}/reset',dependencies=operator_only)
     def reset(rid:str):
         run=get_run(rid); kill(rid)
         return new_run(NewRun(task=run['task']))
@@ -196,5 +206,5 @@ def create_app(runtime=None, token=None, pause_seconds=60):
         nonlocal active
         active=version(new_rules)
         db.write('INSERT OR REPLACE INTO rules VALUES(?,?,?,?)',(active,json.dumps([r.model_dump() for r in new_rules]),english,now()))
-    attach_compiler(app,secured,db,runtime,activate,lambda: [Rule.model_validate(r) for r in json.loads(db.one('SELECT rules_json FROM rules WHERE version_hash=?',(active,))['rules_json'])])
+    attach_compiler(app,operator_only,db,runtime,activate,lambda: [Rule.model_validate(r) for r in json.loads(db.one('SELECT rules_json FROM rules WHERE version_hash=?',(active,))['rules_json'])])
     return app

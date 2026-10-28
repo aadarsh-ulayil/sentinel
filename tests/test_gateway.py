@@ -5,9 +5,10 @@ from fastapi.testclient import TestClient
 from sentinel.app import create_app
 
 TOKEN='test-token-that-is-long-enough-12345'
+AGENT='agent-token-that-is-long-enough-12345'
 @pytest.fixture
 def client(tmp_path):
-    with TestClient(create_app(tmp_path,TOKEN,pause_seconds=.15)) as c:
+    with TestClient(create_app(tmp_path,TOKEN,pause_seconds=.15,agent_token=AGENT)) as c:
         c.headers['Authorization']='Bearer '+TOKEN
         yield c
 
@@ -75,3 +76,13 @@ def test_limit(client):
     r=new(client)
     for _ in range(15): wait(client,submit(client,r,'list_files',{}))
     assert client.post('/api/actions',json={'run_id':r,'tool':'list_files','args':{}}).status_code==409
+
+
+def test_agent_cannot_self_approve(client):
+    r=new(client); aid=submit(client,r,'spend_money',{'amount_inr':300,'payee':'x'})
+    wait(client,aid,False)
+    headers={'Authorization':'Bearer '+AGENT}
+    assert client.post(f'/api/actions/{aid}/answer',json={'approve':True},headers=headers).status_code==403
+    assert client.post(f'/api/runs/{r}/kill',headers=headers).status_code==403
+    assert client.post('/api/compiler/draft',json={'english':'Spend at most 10'},headers=headers).status_code==403
+    assert client.get(f'/api/actions/{aid}',headers=headers).status_code==200

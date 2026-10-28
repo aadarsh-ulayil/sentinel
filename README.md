@@ -2,7 +2,7 @@
 
 A local, deterministic safety gateway between an AI agent and its tools. Built for the Meta Global AI Developer Hackathon.
 
-**Status:** working local proof of concept. The scripted rehearsal is model-free. The live agent uses Meta Muse Spark Open through Baseten; live calls require your own credentials. The optional authoring compiler uses Muse Spark through a separately configured Meta Model API endpoint.
+**Status:** working local proof of concept; a live Baseten Muse Spark Open file-listing run has been verified. The scripted rehearsal is model-free. The live agent uses Meta Muse Spark Open through Baseten; live calls require your own credentials. The optional authoring compiler uses Muse Spark through a separately configured Meta Model API endpoint.
 
 ## Run
 
@@ -14,7 +14,7 @@ cp .env.example .env
 uv run python -c 'import secrets; print(secrets.token_urlsafe(32))'
 ```
 
-Paste that generated value into `SENTINEL_TOKEN` in `.env`. Do not overwrite an existing configured `.env`.
+Paste that generated value into `SENTINEL_TOKEN` in `.env`. Generate a second distinct value for `SENTINEL_AGENT_TOKEN`; the agent uses only this restricted credential. Do not overwrite an existing configured `.env`.
 
 ```sh
 uv run python -m sentinel
@@ -53,7 +53,7 @@ In `.env`, set `BASETEN_BASE_URL=https://inference.baseten.co/v1`. Set `BASETEN_
 uv run python -m sentinel.agent --task 'List the folder, read notes.txt, and tidy redundant drafts.'
 ```
 
-The model is `meta-models/muse-spark-open-1026`. The loop uses the `openai` Python SDK and Chat Completions, up to 15 steps. It parses a fixed JSON action shape, validates requests at the gateway, and polls paused actions until they resolve. It has no direct real tool implementations.
+The originally requested model ID `meta-models/muse-spark-open-1026` returned HTTP 404 on this account. Baseten's authenticated `/models` listing and [official example](https://www.baseten.co/resources/changelog/muse-spark-open-and-nemotron-35-super-vl-available-on-baseten/) identify the available model as `meta-models/muse-spark-open`. Set `BASETEN_MODEL` to that verified identifier (as in `.env.example`); the code retains the original requested ID as its fallback. The loop uses the `openai` Python SDK and Chat Completions, up to 15 steps. It parses a fixed JSON action shape, validates requests at the gateway, and polls paused actions until they resolve. It has no direct real tool implementations.
 
 ## Architecture and files
 
@@ -101,6 +101,10 @@ One model call produces a single structured rule; Pydantic rejects extra fields 
 
 The compiler's required test gate is literal: three allow and three block examples. Pause-only rule drafts may fail this gate and remain unactivatable. Model-proposed tests are examples, not a proof of correctness. No generated code is executed. Compiler prompts and drafts are stored in the local compile log. Live API behavior must be verified with account credentials.
 
+## Verification
+
+Verified locally: 60 automated tests, a live Muse Spark Open listing run using the restricted agent token, and browser login, scripted rehearsal, human denial, kill, and activity report. Compiler calls are mocked in tests; live Meta compiler verification still requires its separate API key.
+
 ## Tests
 
 ```sh
@@ -114,7 +118,7 @@ Tests include traversal, symlinks, payment splitting and concurrency, spaced and
 - SENTINEL governs only actions that go through its gateway. An agent that bypasses it, including one driving the screen or mouse directly, is outside its control.
 - This is a proof of concept, not an OS sandbox or production security boundary. Agent/gateway processes run as the same user. Do not give an untrusted process unrestricted local access and expect this Python gateway to contain it.
 - Humans choose the rules. Model-authored drafts require review. Runtime policy checks never call a model.
-- The shared token identifies a trusted local demo client, not separate operator/agent roles. A client with the shared token can call operator endpoints. Production needs distinct credentials and authorization.
+- The agent and operator use separate tokens. Agent credentials cannot approve/deny, kill/reset, or compile/activate rules. These are local bearer tokens, not a multi-user identity system. A same-user process that reads the operator's `.env` can still bypass this distinction.
 - Path checks use `resolve()` and `is_relative_to()`. They reject traversal and existing escape symlinks, but do not prevent a hostile external same-user process racing filesystem changes. Do not modify sandbox symlinks concurrently.
 - Kill prevents later execution and resolves pending approvals. It cannot undo or guarantee cancellation of an already executing external operation. Execution and SQLite commits are not an atomic transaction; a crash between them can leave an interrupted record after a side effect. Such actions are never automatically retried.
 - Restart marks unfinished runs/actions interrupted. Approvals are not resumed. One server process only.

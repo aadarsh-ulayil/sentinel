@@ -1,12 +1,14 @@
 """SQLite audit storage. Each operation commits before returning."""
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
 def now(): return datetime.now(timezone.utc).isoformat()
 
 class Store:
     def __init__(self,path):
+        self.lock=threading.RLock()
         self.db=sqlite3.connect(path,check_same_thread=False)
         self.db.row_factory=sqlite3.Row
         self.db.execute('PRAGMA journal_mode=WAL')
@@ -24,13 +26,16 @@ class Store:
         self.db.execute("UPDATE runs SET status='interrupted', ended_at=? WHERE status='running'",(now(),))
         self.db.commit()
     def write(self,sql,args=()):
-        cur=self.db.execute(sql,args); self.db.commit(); return cur.lastrowid
-    def rows(self,sql,args=()): return [dict(r) for r in self.db.execute(sql,args).fetchall()]
+        with self.lock:
+            cur=self.db.execute(sql,args); self.db.commit(); return cur.lastrowid
+    def rows(self,sql,args=()):
+        with self.lock:
+            return [dict(r) for r in self.db.execute(sql,args).fetchall()]
     def one(self,sql,args=()):
         rows=self.rows(sql,args); return rows[0] if rows else None
     def counters(self,run): return {r['name']:r['value'] for r in self.rows('SELECT name,value FROM counters WHERE run_id=?',(run,))}
     def success(self,action,result,elapsed):
-        with self.db:
+        with self.lock, self.db:
             self.db.execute("UPDATE actions SET status='executed',result_json=?,duration_ms=? WHERE id=?",(json.dumps(result),elapsed,action['id']))
             tool=action['tool']; args=json.loads(action['args_json'])
             updates={'executed':1}

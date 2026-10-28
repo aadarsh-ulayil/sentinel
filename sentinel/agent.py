@@ -6,10 +6,10 @@ import time
 from pathlib import Path
 import httpx
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAI, APIError
 
 load_dotenv(Path(__file__).resolve().parent.parent/'.env')
-MODEL='meta-models/muse-spark-open-1026'
+MODEL=os.getenv('BASETEN_MODEL','meta-models/muse-spark-open-1026')
 SYSTEM='''You are a folder-tidying demo agent. Return ONLY JSON in one of these shapes:
 {"tool":"tool_name","args":{},"agent_note":"brief reason"} or {"done":true}.
 Tools: list_files(path optional), read_file(path), write_file(path,content), delete_file(path),
@@ -27,14 +27,18 @@ def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--task',default='List the folder, read notes.txt, and tidy redundant drafts.'); parser.add_argument('--run-id'); args=parser.parse_args()
     base=os.getenv('BASETEN_BASE_URL'); keyname=os.getenv('BASETEN_API_KEY_ENV'); key=os.getenv(keyname or '')
     if not base or not key: raise SystemExit('Configure BASETEN_BASE_URL, BASETEN_API_KEY_ENV, and that key variable in .env')
-    with OpenAI(base_url=base,api_key=key,timeout=60,max_retries=0) as model, httpx.Client(base_url='http://127.0.0.1:8000',headers={'Authorization':'Bearer '+os.environ['SENTINEL_TOKEN']},timeout=70) as http:
+    with OpenAI(base_url=base,api_key=key,timeout=60,max_retries=0) as model, httpx.Client(base_url='http://127.0.0.1:8000',headers={'Authorization':'Bearer '+os.environ['SENTINEL_AGENT_TOKEN']},timeout=70) as http:
         if args.run_id: run=args.run_id
         else:
             r=http.post('/api/runs',json={'task':args.task}); r.raise_for_status(); run=r.json()['id']
         print('Run:',run,flush=True)
         messages=[{'role':'system','content':SYSTEM},{'role':'user','content':args.task}]
         for _ in range(15):
-            result=model.chat.completions.create(model=MODEL,messages=messages)
+            try:
+                result=model.chat.completions.create(model=MODEL,messages=messages)
+            except APIError as exc:
+                http.post('/api/runs/'+run+'/finish',json={'status':'failed'})
+                raise SystemExit(f'Meta request failed ({type(exc).__name__}, HTTP {getattr(exc, "status_code", "unavailable")}). Check model access, base URL and credentials. Run stopped.') from None
             content=result.choices[0].message.content or ''
             messages.append({'role':'assistant','content':content})
             try:
