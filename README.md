@@ -191,3 +191,75 @@ folder, choose it again on launch.
 Qt tray support and deployment reference:
 https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QSystemTrayIcon.html
 https://doc.qt.io/qtforpython-6/deployment/index.html
+
+## Connect any agent: CLI, Python, or MCP
+
+SENTINEL is model-independent. The **agent's tool execution layer** calls SENTINEL;
+SENTINEL checks the policy and executes supported actions itself. No model is called
+for enforcement. The native app displays these actions and handles human approval.
+A standalone chatbot without tool integration cannot be monitored this way.
+
+Install integrations in the project virtual environment:
+
+```sh
+python -m pip install -e '.[integrations]'
+```
+
+Start the gateway using the desktop app or `python -m sentinel`. Then:
+
+```sh
+sentinel start "My agent's task"
+# Copy the returned id into RUN_ID below, reusing it for the entire task.
+sentinel action RUN_ID list_files --args '{}'
+sentinel action RUN_ID run_command --args '{"command":"ls"}'
+sentinel finish RUN_ID
+```
+
+`python -m sentinel.cli` is equivalent to `sentinel`. The CLI writes JSON to stdout;
+exit 2 means blocked/denied/failed, exit 1 means a request/configuration error.
+For portable quoting or long arguments, pipe a JSON object into `--args -`.
+Use `--no-wait` to return immediately, then `sentinel status ACTION_ID` to poll.
+A client wait timeout does not cancel an action: inspect its ID before retrying.
+The library interface is `sentinel.client.GatewayClient` (`start`, `action`,
+`status`, `finish`, `close`); it uses only the restricted agent token.
+
+### MCP-compatible desktop and terminal agents
+
+Add a local **stdio** server to your agent's MCP settings. This is a generic
+`mcpServers` example; hosts may use a different configuration layout:
+
+```json
+{
+  "mcpServers": {
+    "sentinel": {
+      "command": "/absolute/path/to/sentinel/.venv/bin/python",
+      "args": ["-m", "sentinel.mcp_server"],
+      "env": {"SENTINEL_HOME": "/absolute/path/to/sentinel"}
+    }
+  }
+}
+```
+
+On Windows use `C:\\path\\to\\sentinel\\.venv\\Scripts\\python.exe` as
+`command` and your project directory for `SENTINEL_HOME`. Use an absolute path;
+the host need not start in the project folder. Keep `.env` private. The adapter
+reads only `SENTINEL_AGENT_TOKEN`; no model API key is needed by the adapter.
+
+Exposed tools: `start_task`, `guarded_action`, `action_status`, `finish_task`.
+The model receives the supported action names and argument documentation.
+MCP action submission returns promptly, including when human approval is needed;
+configure the agent to poll status rather than treating submission as success.
+Approving actions, editing policies, and operator credentials are never exposed
+as MCP tools. The adapter uses the official Python SDK's v1 stdio transport:
+https://py.sdk.modelcontextprotocol.io/v1/
+
+**Enforcement limits:** Give an integrated agent only SENTINEL tools if you want
+all its supported actions checked. Other shell, browser, filesystem, or screen
+control tools bypass this gateway. This is not whole-computer monitoring or an OS
+sandbox. Files are currently limited to each task's synthetic test folder,
+commands are only `pwd`/`ls`/`whoami`, and messages/payments are simulated.
+Limits are per task; an agent able to create new tasks can reset those budgets.
+Do not treat them as an account-wide spending or deletion limit. Do not grant
+untrusted agents access to the operator `.env` or same-user filesystem and expect
+credential isolation. Windows source compatibility is implemented but needs
+verification on a Windows host.

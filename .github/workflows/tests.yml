@@ -6,5 +6,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uv sync --locked
-      - run: uv run pytest -q
+      - run: uv sync --locked --extra integrations
+      - run: uv run --no-sync pytest -q
