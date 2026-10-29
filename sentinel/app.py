@@ -20,7 +20,8 @@ from .policy import DEFAULT_RULES, evaluate
 from .storage import Store, now
 from .tools import execute
 
-BASE=Path(__file__).resolve().parent.parent
+from .paths import DATA, SOURCE
+BASE=DATA
 load_dotenv(BASE/'.env')
 
 class NewRun(Strict):
@@ -56,7 +57,7 @@ def create_app(runtime=None, token=None, pause_seconds=60, agent_token=None):
     app=FastAPI(title='SENTINEL',lifespan=lifespan)
     app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
     app.state.store=db
-    templates=Jinja2Templates(directory=str(BASE/'sentinel/templates'))
+    templates=Jinja2Templates(directory=str(SOURCE/'sentinel/templates'))
     def authorize(request: Request):
         origin=request.headers.get('origin')
         if origin and origin!=str(request.base_url).rstrip('/'):

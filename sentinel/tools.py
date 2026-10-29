@@ -4,7 +4,8 @@ import ipaddress
 import json
 import socket
 import ssl
-import subprocess
+import getpass
+import shlex
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -65,10 +66,12 @@ def execute(action, root: Path, runtime: Path, rules):
         return {'deleted':a['path']}
     if t=='run_command':
         if not command_allowed(a['command']): raise ValueError('Command not supported')
-        name=a['command'].strip()
-        binaries={'pwd':'/bin/pwd','ls':'/bin/ls','whoami':'/usr/bin/whoami'}
-        done=subprocess.run([binaries[name]],cwd=root,env={'PATH':'/usr/bin:/bin'},capture_output=True,text=True,timeout=5,check=True)
-        return {'stdout':done.stdout[:10000]}
+        name=shlex.split(a['command'])[0]
+        # These three bounded operations have identical semantics on both OSes.
+        outputs = {'pwd': lambda: str(root.resolve()) + '\n',
+                   'ls': lambda: '\n'.join(sorted(p.name for p in root.iterdir())) + '\n',
+                   'whoami': lambda: getpass.getuser() + '\n'}
+        return {'stdout': outputs[name]()[:10000]}
     if t=='fetch_url':
         caps=[r.limit for r in rules if r.type=='download_block']
         return fetch(a['url'],runtime/'quarantine',min(caps or [1000000]))

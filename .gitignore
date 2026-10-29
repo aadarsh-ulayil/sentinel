@@ -7,3 +7,6 @@ __pycache__/
 .runtime/
 *.egg-info/
 .DS_Store
+dist/
+build/
+*.spec

@@ -132,3 +132,62 @@ Tests include traversal, symlinks, payment splitting and concurrency, spaced and
 ## Git basics
 
 `git status` shows changes. `git diff` shows edits. `git add <file>` stages a file. `git commit -m "message"` records a local snapshot. `git push` publishes committed changes to the configured GitHub remote. Always inspect `git diff --cached` before publishing. Never force-add `.env` or `.runtime/`.
+
+## Native desktop app (macOS and Windows)
+
+The shared desktop interface uses Qt widgets: no browser, HTML view, or address bar.
+A shield lives in the Mac menu bar or Windows notification area. Open SENTINEL shows
+recent actions, their arguments and decisions, approval controls, and a stop-runs
+button. Closing the window hides it when a system tray is available. Quit closes
+the desktop app and any gateway it started; an independently installed background
+service keeps running. Stop active runs prevents further actions in those runs.
+
+The gateway still uses a private loopback API for agents. This is internal
+communication, not the desktop interface. The gateway-only browser dashboard is
+retained for development and compatibility; the desktop app never opens it.
+
+From this source folder, install and run on either OS (Python 3.12+):
+
+```sh
+python -m pip install -e '.[desktop,package]'
+python -m sentinel.desktop
+```
+
+Use your virtual environment's Python (`.venv/bin/python` on macOS,
+`.venv\\Scripts\\python.exe` on Windows). The source app reads the existing `.env`.
+Start gateway starts it if it is not already running. Allowed actions stay quiet;
+blocks and approval requests produce system notifications when permitted by the OS.
+
+Build on the target OS:
+
+```sh
+python scripts/build_desktop.py
+```
+
+macOS output: `dist/SENTINEL.app`. Windows output: `dist/SENTINEL/SENTINEL.exe`
+(distribute the entire SENTINEL folder). Build each platform on that platform;
+Windows builds and interactive behavior must be verified on a Windows machine.
+Unsigned builds are development artifacts, not notarized/signed installers.
+
+Packaged apps read `.env` and store `.runtime` in
+`~/Library/Application Support/SENTINEL` (Mac) or `%LOCALAPPDATA%/SENTINEL`
+(Windows). `SENTINEL_HOME` overrides this directory. Secrets are never bundled.
+Copy your configured `.env` there before launching a packaged build. Do not run
+source and packaged gateways simultaneously with different credentials.
+
+The older Swift companion and macOS LaunchAgent scripts are legacy Mac-only
+helpers. The shared desktop app supersedes that companion; quit the old companion
+before using this app to avoid duplicate tray icons.
+
+The allowed command names `pwd`, `ls`, and `whoami` are implemented as bounded
+Python operations on both platforms. They do not invoke a shell.
+
+If the packaged app cannot find its configuration, it opens a native file picker.
+Choose your existing project `.env` (on macOS, Command–Shift–Period reveals hidden
+files). The app uses that file's folder for gateway state during that session;
+it does not copy keys. Until a configuration is placed in the standard settings
+folder, choose it again on launch.
+
+Qt tray support and deployment reference:
+https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QSystemTrayIcon.html
+https://doc.qt.io/qtforpython-6/deployment/index.html

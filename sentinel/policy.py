@@ -2,7 +2,7 @@
 import re
 import shlex
 import unicodedata
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import urlsplit, unquote
 from .models import Action, Rule, Verdict
 
@@ -20,6 +20,14 @@ ARGUMENTS = {'list_files':({'path'},set()), 'read_file':({'path'},{'path'}),
 BLOCKED_SUFFIXES = {'.exe','.dmg','.pkg','.sh','.zip','.tar','.gz','.bz2','.xz','.7z','.rar','.msi','.bat','.cmd','.ps1','.app','.jar','.deb','.rpm','.iso','.dll','.so','.dylib'}
 
 def safe_path(root: Path, value: str) -> Path:
+    # Reject Windows device names and alternate data streams on every platform.
+    windows = PureWindowsPath(value)
+    reserved = {'CON', 'PRN', 'AUX', 'NUL', *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}
+    if windows.drive or ':' in value or '\\' in value or any(
+            part.rstrip(' .').split('.')[0].upper() in reserved
+            or (part not in {'.', '..'} and part.endswith((' ', '.')))
+            for part in windows.parts):
+        raise ValueError('Unsupported cross-platform file path')
     root = root.resolve()
     target = (root / value).resolve()
     if not target.is_relative_to(root) or target == root:
