@@ -1,7 +1,9 @@
 # SENTINEL setup guide
 
-SENTINEL checks tool actions sent by connected AI assistants. Use the native app
-to see activity and approve or deny requests. You do not need to open a webpage.
+SENTINEL is being built to use Meta AI evaluators to interpret restrictions and
+evaluate the actions of other AI agents. The current gateway checks submitted
+tool actions, with a configurable Meta reviewer alongside hard rules. Use the native
+app to see activity and approve or deny requests. You do not need to open a webpage.
 
 ## Already have the app configured?
 

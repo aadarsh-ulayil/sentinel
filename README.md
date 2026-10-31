@@ -1,12 +1,16 @@
-> **Updated design:** Meta now reviews proposed actions from other AI agents. Deterministic rules remain the first gate; optional Meta review can escalate to a human but cannot override a block. The Baseten-powered agent is an optional demo, not the reviewer.
-
 # SENTINEL
+
+**Meta-powered oversight for AI agents.** SENTINEL is being built to use Meta AI evaluators to identify relevant restrictions, assess what connected AI agents are trying to do, and flag actions that exceed the user's intent or permissions. Built for the Meta Global AI Developer Hackathon.
 
 **Start here: [Desktop setup and assistant connection guide](docs/SETUP.md).**
 
-A local safety gateway with deterministic rules and optional Meta AI review of other agents’ proposed actions. Built for the Meta Global AI Developer Hackathon.
+## What Meta does
 
-**Status:** working local proof of concept. Desktop assistant setup is implemented; live Meta reviewer validation is incomplete and Windows has not been tested on-device. Previously, a live Baseten Muse Spark Open file-listing run has been verified. The scripted rehearsal is model-free. The live agent uses Meta Muse Spark Open through Baseten; live calls require your own credentials. The optional authoring compiler uses Muse Spark through a separately configured Meta Model API endpoint.
+The intended workflow is: the user describes a task and boundaries; Meta helps interpret them into proposed restrictions and evaluates another agent's proposed actions against those restrictions and the task. The user reviews and accepts restrictions. SENTINEL records decisions and pauses concerning actions for human review.
+
+Meta is the evaluator of connected agents such as Codex and Claude Code. The legacy Meta demo agent is only a test fixture; it is not the product's purpose. Deterministic rules enforce the accepted hard limits, and Meta cannot override a hard block or approve execution itself.
+
+**Implementation status:** the desktop app, assistant connections, deterministic gateway and audit log work locally. A single Meta reviewer integration evaluates submitted action metadata; live reviewer validation is incomplete. Model-assisted rule drafting is a separate optional integration requiring configuration. A coordinated team of Meta evaluator agents and automatic discovery of restrictions are not implemented. Windows has not been tested on-device. Only actions routed through SENTINEL are visible to it.
 
 ## Run
 
@@ -62,15 +66,18 @@ The originally requested model ID `meta-models/muse-spark-open-1026` returned HT
 ## Architecture and files
 
 ```text
-Connected AI agent (Codex / Claude / demo)
-       | HTTP action + bearer token
+Connected AI agent (Codex / Claude / other)
+       | proposed tool action
        v
-FastAPI gateway --> pure Python policy --> allow / block / pause
-       |                       | pause: operator or 60-second timeout
-       v                       v
-bounded tool execution <--- approval
+SENTINEL gateway --> deterministic hard-rule checks --> block if prohibited
        |
-SQLite WAL audit + per-run counters --> SSE dashboard + report
+       v
+Meta evaluator (when enabled): task + restrictions + action metadata
+       | clear: preserve rule decision; flag/unavailable: request human review
+       v
+Human approval when required --> bounded tool execution
+       |
+Audit log --> native desktop app + report
 ```
 
 - `sentinel/models.py`: Pydantic action, verdict, and closed-set rule contracts.
@@ -79,7 +86,8 @@ SQLite WAL audit + per-run counters --> SSE dashboard + report
 - `sentinel/storage.py`: SQLite schema, persisted decisions, successful-execution counters.
 - `sentinel/app.py`: authenticated routes, per-run serialization, approval events, SSE, kill/reset, and report endpoints.
 - `sentinel/templates/`: Jinja2 dashboard and report. Vanilla JavaScript handles SSE and controls; HTMX refreshes reports; Tailwind CDN is available, with core styling local in the template.
-- `sentinel/agent.py`: live Meta loop, HTTP stubs only.
+- `sentinel/reviewer.py`: Meta evaluation of other agents’ proposed actions.
+- `sentinel/agent.py`: legacy Meta demo agent, HTTP stubs only.
 - `sentinel/demo.py`: deterministic demo rehearsal, explicitly separate from the live model.
 - `sentinel/compiler.py`: optional model-assisted rule drafting and deterministic test gate.
 - `tests/`: policy tables and gateway integration tests.
