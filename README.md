@@ -1,8 +1,12 @@
+> **Updated design:** Meta now reviews proposed actions from other AI agents. Deterministic rules remain the first gate; optional Meta review can escalate to a human but cannot override a block. The Baseten-powered agent is an optional demo, not the reviewer.
+
 # SENTINEL
 
-A local, deterministic safety gateway between an AI agent and its tools. Built for the Meta Global AI Developer Hackathon.
+**Start here: [Desktop setup and assistant connection guide](docs/SETUP.md).**
 
-**Status:** working local proof of concept; a live Baseten Muse Spark Open file-listing run has been verified. The scripted rehearsal is model-free. The live agent uses Meta Muse Spark Open through Baseten; live calls require your own credentials. The optional authoring compiler uses Muse Spark through a separately configured Meta Model API endpoint.
+A local safety gateway with deterministic rules and optional Meta AI review of other agents’ proposed actions. Built for the Meta Global AI Developer Hackathon.
+
+**Status:** working local proof of concept. Desktop assistant setup is implemented; live Meta reviewer validation is incomplete and Windows has not been tested on-device. Previously, a live Baseten Muse Spark Open file-listing run has been verified. The scripted rehearsal is model-free. The live agent uses Meta Muse Spark Open through Baseten; live calls require your own credentials. The optional authoring compiler uses Muse Spark through a separately configured Meta Model API endpoint.
 
 ## Run
 
@@ -45,7 +49,7 @@ uv run python -m sentinel.demo --auto-deny
 
 **Reset as new run** kills the old run and creates a fresh sandbox and counters. It never erases historical reports.
 
-## Live Meta agent
+## Optional legacy demo agent (Meta)
 
 In `.env`, set `BASETEN_BASE_URL=https://inference.baseten.co/v1`. Set `BASETEN_API_KEY_ENV` to the API-key variable name from your Baseten documentation, and add a separate line with that variable's secret value. Never commit `.env`.
 
@@ -58,7 +62,7 @@ The originally requested model ID `meta-models/muse-spark-open-1026` returned HT
 ## Architecture and files
 
 ```text
-Meta agent (separate process)
+Connected AI agent (Codex / Claude / demo)
        | HTTP action + bearer token
        v
 FastAPI gateway --> pure Python policy --> allow / block / pause
@@ -119,7 +123,7 @@ Tests include traversal, symlinks, payment splitting and concurrency, spaced and
 
 - SENTINEL governs only actions that go through its gateway. An agent that bypasses it, including one driving the screen or mouse directly, is outside its control.
 - This is a proof of concept, not an OS sandbox or production security boundary. Agent/gateway processes run as the same user. Do not give an untrusted process unrestricted local access and expect this Python gateway to contain it.
-- Humans choose the rules. Model-authored drafts require review. Runtime policy checks never call a model.
+- Humans choose the rules. Model-authored drafts require review. Deterministic policy checks never call a model. The separately enabled Meta review layer does call a model and may only escalate to human review.
 - The agent and operator use separate tokens. Agent credentials cannot approve/deny, kill/reset, or compile/activate rules. These are local bearer tokens, not a multi-user identity system. A same-user process that reads the operator's `.env` can still bypass this distinction.
 - Path checks use `resolve()` and `is_relative_to()`. They reject traversal and existing escape symlinks, but do not prevent a hostile external same-user process racing filesystem changes. Do not modify sandbox symlinks concurrently.
 - Kill prevents later execution and resolves pending approvals. It cannot undo or guarantee cancellation of an already executing external operation. Execution and SQLite commits are not an atomic transaction; a crash between them can leave an interrupted record after a side effect. Such actions are never automatically retried.
@@ -149,7 +153,7 @@ retained for development and compatibility; the desktop app never opens it.
 From this source folder, install and run on either OS (Python 3.12+):
 
 ```sh
-python -m pip install -e '.[desktop,package]'
+python -m pip install -e '.[desktop,package,integrations]'
 python -m sentinel.desktop
 ```
 
@@ -263,3 +267,54 @@ Do not treat them as an account-wide spending or deletion limit. Do not grant
 untrusted agents access to the operator `.env` or same-user filesystem and expect
 credential isolation. Windows source compatibility is implemented but needs
 verification on a Windows host.
+
+## Guided project setup and Meta review
+
+In the native app, click **Set up a project**:
+
+1. Choose one project folder.
+2. Select **Read only** (default) or **Ask before every edit or deletion**.
+3. Optionally enable Meta review, save, then start a new task through the assistant's SENTINEL connection.
+
+The operator alone selects folders and permissions. Agents cannot change them.
+Existing demo tasks keep their demo folders. Selecting a different project revokes
+previous project bindings. Disconnecting prevents further project actions; already
+completed work cannot be undone. `.env`, `.git`, private/internal directories,
+key files, symlinks and multiply-linked files are excluded. File changes require
+approval and are rejected if the file changed while awaiting the decision.
+This path checking is still a proof of concept, not protection against hostile
+same-user processes racing filesystem operations. Commands remain bounded
+inspection operations; arbitrary build scripts, package managers and unrestricted
+terminal access are not supported.
+
+Meta review uses the configured `BASETEN_BASE_URL`, `BASETEN_MODEL` and key.
+It is **off by default**. Enabling it sends task text, action metadata and rules to
+Baseten. File contents, message bodies, agent notes and tool results are not sent.
+Best-effort redaction is not a guarantee; paths and task descriptions can still
+contain sensitive information. Do not enable it for confidential metadata without
+permission. The model sees only limited information and cannot certify safety.
+
+Order: deterministic hard rules → optional Meta review → required human approval
+→ execution. Hard-blocked actions never reach Meta. A clear Meta review does not
+remove a rules-required pause. Flags, malformed responses, provider failures and
+timeouts require a human decision. A kill during review prevents execution.
+Reviews (assessment, explanation, model, latency) are kept separately in the audit
+record. The desktop action details show both the rule decision and Meta's review.
+Enabling/disabling review applies to actions that have not started their review;
+turning it off does not release an action already waiting for a human.
+
+### Connect an assistant without copying commands
+
+In the desktop app, click **Connect an AI**, then **Connect Codex** or
+**Connect Claude Code**. The assistant's command-line tool must already be installed.
+SENTINEL locates it and saves the MCP connection using that tool's own setup command.
+Existing different SENTINEL connections are left unchanged. No API keys are copied
+into the assistant settings. This development build requires the original SENTINEL
+folder and its `.venv` to remain available.
+
+Restart the assistant after connecting. Click **Copy test message**, paste into a
+new assistant chat, and check that the action appears in SENTINEL. Saving settings
+alone is not proof that an action passed through the gateway. The Claude chat desktop
+app has separate configuration; this button connects Claude Code.
+
+This does not disable the assistant's other tools or provide machine-wide monitoring.

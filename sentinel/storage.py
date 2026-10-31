@@ -14,6 +14,10 @@ class Store:
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.execute('PRAGMA foreign_keys=ON')
         self.db.executescript('''
+        CREATE TABLE IF NOT EXISTS settings(name TEXT PRIMARY KEY,value TEXT);
+        CREATE TABLE IF NOT EXISTS reviews(action_id INTEGER PRIMARY KEY,assessment TEXT,reason TEXT,model TEXT,duration_ms REAL);
+        CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,root TEXT,mode TEXT,identity TEXT,enabled INTEGER);
+        CREATE TABLE IF NOT EXISTS run_projects(run_id TEXT PRIMARY KEY,project_id TEXT);
         CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,started_at TEXT,ended_at TEXT,task TEXT,status TEXT,rules_version TEXT);
         CREATE TABLE IF NOT EXISTS actions(id INTEGER PRIMARY KEY,run_id TEXT REFERENCES runs(id),ts TEXT,tool TEXT,args_json TEXT,status TEXT,duration_ms REAL,result_json TEXT,agent_note TEXT);
         CREATE TABLE IF NOT EXISTS decisions(id INTEGER PRIMARY KEY,action_id INTEGER REFERENCES actions(id),verdict TEXT,rule_id TEXT,reason TEXT,decided_by TEXT,decided_at TEXT,rules_version TEXT);
@@ -22,7 +26,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS compile_log(id INTEGER PRIMARY KEY,english TEXT,model TEXT,draft_json TEXT,tests_json TEXT,accepted INTEGER DEFAULT 0);
         ''')
         # A restart never resumes a pending action or silently reruns a tool.
-        self.db.execute("UPDATE actions SET status='interrupted' WHERE status IN ('waiting_for_human','executing','checking')")
+        self.db.execute("UPDATE actions SET status='interrupted' WHERE status IN ('waiting_for_human','executing','checking','reviewing')")
         self.db.execute("UPDATE runs SET status='interrupted', ended_at=? WHERE status='running'",(now(),))
         self.db.commit()
     def write(self,sql,args=()):

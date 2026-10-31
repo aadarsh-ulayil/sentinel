@@ -31,7 +31,7 @@ class GatewayClient:
         result = self.request('POST', '/api/actions',
             {'run_id': run_id, 'tool': tool, 'args': args, 'agent_note': note})
         deadline = time.monotonic() + 75
-        while wait and result['status'] in {'checking', 'executing', 'waiting_for_human'}:
+        while wait and result['status'] in {'checking', 'executing', 'waiting_for_human', 'reviewing'}:
             if time.monotonic() >= deadline:
                 # A timeout is NOT cancellation: return the ID for status lookup.
                 return {**result, 'client_wait_expired': True}

@@ -10,7 +10,7 @@ from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QTableWidget, QTableWidgetItem, QFileDialog,
     QPlainTextEdit, QMessageBox, QSystemTrayIcon, QMenu, QHeaderView,
-    QLineEdit, QComboBox, QCheckBox, QSplitter)
+    QLineEdit, QComboBox, QCheckBox, QSplitter, QDialog)
 from .paths import DATA
 from dotenv import load_dotenv
 
@@ -39,7 +39,7 @@ TOOL_NAMES = {'list_files': 'Look at files', 'read_file': 'Read a file',
 STATUS_NAMES = {'executed': 'Completed', 'blocked': 'Blocked by a rule',
                 'denied': 'Not approved', 'failed': 'Could not complete',
                 'waiting_for_human': 'Needs your approval', 'checking': 'Checking safety',
-                'executing': 'In progress'}
+                'executing': 'In progress', 'reviewing': 'Meta is reviewing'}
 
 
 def action_text(action):
@@ -56,6 +56,9 @@ def readable_details(action):
               'amount_inr': 'Amount (INR)', 'payee': 'Payee'}
     lines = [action_text(action), STATUS_NAMES.get(action['status'], action['status']), '']
     lines += [f'{labels.get(k, k.replace("_", " ").capitalize())}: {v}' for k, v in args.items()]
+    review = action.get('meta_review')
+    if review:
+        lines += ['', 'Meta AI review (' + review['assessment'] + ')', review['reason']]
     decisions = action.get('decisions', [])
     if decisions:
         lines += ['', 'Why this happened', decisions[-1].get('reason', 'No explanation available.')]
@@ -119,6 +122,12 @@ class Window(QMainWindow):
         review = QPushButton('Review waiting actions')
         review.setObjectName('primary')
         review.clicked.connect(self.review_waiting)
+        setup = QPushButton('Set up a project')
+        setup.clicked.connect(self.setup_project)
+        connect = QPushButton('Connect an AI')
+        connect.clicked.connect(self.connect_assistant)
+        controls.addWidget(connect)
+        controls.addWidget(setup)
         controls.addWidget(review)
         controls.addWidget(self.start_button)
         controls.addStretch()
@@ -288,6 +297,118 @@ class Window(QMainWindow):
         self.show_details()
         self.poll()
 
+    def connect_assistant(self):
+        from .connections import connect, TEST_MESSAGE
+        from . import paths
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Connect your AI to SENTINEL')
+        dialog.setMinimumWidth(580)
+        layout = QVBoxLayout(dialog)
+        title = QLabel('Connect your AI in a few clicks')
+        title.setStyleSheet('font-size: 22px; font-weight: bold;')
+        layout.addWidget(title)
+        explanation = QLabel('1. Choose your assistant. SENTINEL saves its local connection settings for you. No API key or terminal command is needed here.')
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        status = QLabel('Choose the assistant you use on this computer.')
+        status.setWordWrap(True)
+        buttons = []
+        bridge = Bridge(dialog)
+        def completed(_label, result):
+            for button in buttons:
+                button.setEnabled(True)
+            status.setText(str(result))
+        bridge.done.connect(completed)
+        def install(host):
+            for button in buttons:
+                button.setEnabled(False)
+            status.setText('Setting up the connection…')
+            def work():
+                try:
+                    result = connect(host, paths.DATA)
+                except Exception as error:
+                    result = str(error) if isinstance(error, ValueError) else 'Setup could not finish. Check the assistant is installed and try again.'
+                try:
+                    bridge.done.emit(host, result)
+                except RuntimeError:
+                    pass  # The parent window may have closed while setup was running.
+            self.pool.submit(work)
+        for name, host in [('Connect Codex', 'codex'), ('Connect Claude Code', 'claude')]:
+            button = QPushButton(name)
+            button.clicked.connect(lambda checked=False, h=host: install(h))
+            buttons.append(button)
+            layout.addWidget(button)
+        layout.addWidget(status)
+        instructions = QLabel('2. Restart your assistant if you just connected it.\n3. Copy this test message and send it in a new chat. Watch for the action in SENTINEL.')
+        instructions.setWordWrap(True)
+        layout.addWidget(instructions)
+        prompt = QPlainTextEdit(TEST_MESSAGE)
+        prompt.setReadOnly(True)
+        prompt.setMaximumHeight(105)
+        layout.addWidget(prompt)
+        copy = QPushButton('Copy test message')
+        copy.clicked.connect(lambda: (QApplication.clipboard().setText(TEST_MESSAGE), copy.setText('Copied — paste into your assistant')))
+        layout.addWidget(copy)
+        note = QLabel('Only actions sent through SENTINEL are checked. The assistant’s other tools still bypass it. Claude Code is supported here; the Claude chat app uses separate settings.')
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        close = QPushButton('Done')
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close)
+        dialog.exec()
+
+    def setup_project(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Set up SENTINEL')
+        dialog.setMinimumWidth(620)
+        dialog.setStyleSheet('QDialog { background: white; } QCheckBox { color: #202322; }')
+        layout = QVBoxLayout(dialog)
+        title = QLabel('Protect a project in three steps')
+        title.setStyleSheet('font-size: 22px; font-weight: bold;')
+        layout.addWidget(title)
+        layout.addWidget(QLabel('1. Choose the folder your AI may access'))
+        folder = QLineEdit()
+        folder.setReadOnly(True)
+        folder.setPlaceholderText('No folder selected')
+        choose = QPushButton('Choose project folder…')
+        def pick():
+            selected = QFileDialog.getExistingDirectory(dialog, 'Choose one project folder')
+            if selected: folder.setText(selected)
+        choose.clicked.connect(pick)
+        layout.addWidget(folder)
+        layout.addWidget(choose)
+        layout.addWidget(QLabel('2. Choose what it may do'))
+        mode = QComboBox()
+        mode.addItems(['Read only — no file changes', 'Ask me before every edit or deletion'])
+        layout.addWidget(mode)
+        meta = QCheckBox('Use Meta AI to review other agents’ actions')
+        meta.setChecked(self.state.get('meta_review_enabled', False))
+        layout.addWidget(meta)
+        privacy = QLabel('When enabled, task text, action metadata and rules are sent to Meta’s model via Baseten. File contents and message bodies are omitted. Metadata can still contain sensitive information. Meta can flag concerns, never override a block.')
+        privacy.setWordWrap(True)
+        layout.addWidget(privacy)
+        layout.addWidget(QLabel('3. Use SENTINEL tools in your assistant'))
+        guide = QLabel('Use Connect an AI on the main window to configure Codex or Claude Code. Start a NEW task after saving. Ask it to use only SENTINEL tools for this folder. Other terminal, browser and file tools bypass SENTINEL; this app cannot disable them for you. Build scripts are not supported yet.')
+        guide.setWordWrap(True)
+        layout.addWidget(guide)
+        save = QPushButton('Save project and review settings')
+        def apply():
+            if not folder.text():
+                QMessageBox.information(dialog, 'Choose a folder', 'Choose a specific project folder first.')
+                return
+            root, selected_mode, enabled = folder.text(), ['read_only', 'approve_changes'][mode.currentIndex()], meta.isChecked()
+            def configure():
+                self.request('/api/reviewer', {'enabled': enabled})
+                return self.request('/api/project', {'root': root, 'mode': selected_mode})
+            self.submit('setup', configure)
+            dialog.accept()
+        save.clicked.connect(apply)
+        layout.addWidget(save)
+        disconnect = QPushButton('Disconnect project access')
+        disconnect.clicked.connect(lambda: (self.submit('disconnect', lambda: self.request('/api/project/disconnect', {})), dialog.accept()))
+        layout.addWidget(disconnect)
+        dialog.exec()
+
     def navigate(self, index):
         self.search.clear()
         self.filter.setCurrentIndex(index)
@@ -339,6 +460,8 @@ class Window(QMainWindow):
                 QMessageBox.warning(self, 'Request failed', 'The request could not be completed. The action may have expired or the gateway is unavailable.')
             return
         if label != 'state':
+            if label == 'setup':
+                QMessageBox.information(self, 'Project ready', 'Saved. New SENTINEL tasks now use the chosen folder. Existing tasks keep their original scope; previous project access is revoked.')
             self.poll()
             return
         self.connected = True
@@ -350,6 +473,7 @@ class Window(QMainWindow):
         actions = result['actions']
         waiting = sum(a['status'] == 'waiting_for_human' for a in actions)
         self.status.setText(f'Connected · {waiting} action(s) need your decision.' if waiting else 'Connected · No decisions needed. SENTINEL is ready to check connected AI actions.')
+        self.status.setText(self.status.text() + (' · Meta review ON' if result.get('meta_review_enabled') else ' · Meta review OFF'))
         for card, count, title in zip(self.counts,
                 [waiting, sum(a['status'] in ('blocked', 'denied', 'failed') for a in actions), sum(a['status'] == 'executed' for a in actions)],
                 ['NEEDS YOUR APPROVAL', 'BLOCKED OR DENIED', 'COMPLETED']):
